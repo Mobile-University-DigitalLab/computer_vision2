@@ -1,6 +1,8 @@
 ---
 title: "Computer Vision mit R"
-output: html_notebook
+output:
+  word_document: default
+  html_notebook: default
 ---
 # 1. Computer Vision mit R
 # Vorbereitungen
@@ -139,7 +141,7 @@ plot(im.blurry)
 
 ## Save images
 ```{r}
-imager::save.image(boats,"boats")
+imager::save.image(boats,"boats.jpg")
 ```
 
 

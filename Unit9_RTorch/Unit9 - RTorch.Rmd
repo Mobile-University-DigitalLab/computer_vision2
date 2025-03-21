@@ -1,0 +1,201 @@
+---
+title: "Unit 9 CNNs mit RTorch"
+output: html_notebook
+---
+
+# Tensoren
+Um mit Tensoren zu arbeiten, müssen Sie zunächst das Package installieren und laden:
+```{r}
+if (!require("torch")) install.packages("torch")
+library(torch)
+```
+
+Erstellen Sie direkt Ihren ersten Tensor in Form einer Matrix:
+```{r}
+torch_tensor(matrix(1:9, ncol=3))
+```
+
+Sie können auch vordefinierte Tensoren erstellen:
+```{r}
+torch_eye(n =5)
+```
+
+Tensoren können aus Datensätzen erstellt werden:
+```{r}
+torch_tensor(JohnsonJohnson)
+```
+
+Gegebenenfalls müssen characters erst in Faktoren, dann Numerics überführt werden und daraus dann ein Tensor erstellt werden.
+
+
+Sie können mit Tensoren rechnen
+Addition
+```{r}
+t1 <- torch_tensor(c(1, 2))
+t2 <- torch_tensor(c(3, 4))
+
+torch_add(t1, t2)
+```
+
+
+Sie können Tensoren untersuchen und deren Eigenschaften bearbeiten:
+```{r}
+t2 <- t1$to(dtype = torch_int())
+t2$dtype
+```
+
+Kreuzprodukt
+```{r}
+t1 <- torch_tensor(c(2,7,1))
+t2 <- torch_tensor(c(8,2,8))
+t1$dot(t2)
+```
+
+Matrixmultiplikation
+```{r}
+t1 <- torch_tensor(1:3)
+t2 <- torch_tensor(4:6)
+t3 <- torch_tensor(matrix(1:12, ncol = 3, byrow = TRUE))
+t3$matmul(t1)
+```
+
+Skalarprodukt
+```{r}
+torch_multiply(t1, t2)
+```
+
+Schließlich können Sie Summary Operations benutzen. Sie können entweder die ganze Matrix oder nur Zeilen oder nur Spalten einbeziehen (Dimension)
+
+```{r}
+t <- torch_outer(torch_tensor(1:3), torch_tensor(1:6))
+t$sum()
+```
+
+```{r}
+t$sum(dim = 1)
+```
+
+```{r}
+t$sum(dim = 2)
+```
+
+
+# Bildklassifizierung mit Torch in R - Beispiel 1
+Aus: Keydana, 2020
+
+```{r}
+library(torch)
+library(torchvision)
+library(luz)
+```
+
+
+```{r}
+set.seed(777)
+torch_manual_seed(777)
+
+dir <- "~/.torch-datasets"
+
+train_ds <- tiny_imagenet_dataset(
+  dir,
+  download = TRUE,
+  transform = function(x) {
+    x %>%
+      transform_to_tensor() 
+  }
+)
+
+valid_ds <- tiny_imagenet_dataset(
+  dir,
+  split = "val",
+  transform = function(x) {
+    x %>%
+      transform_to_tensor()
+  }
+)
+```
+
+
+```{r}
+train_dl <- dataloader(train_ds,
+  batch_size = 128,
+  shuffle = TRUE
+)
+valid_dl <- dataloader(valid_ds, batch_size = 128)
+
+
+batch <- train_dl %>%
+  dataloader_make_iter() %>%
+  dataloader_next()
+
+dim(batch$x)
+```
+
+```{r}
+batch$y
+```
+
+```{r}
+convnet <- nn_module(
+  "convnet",
+  initialize = function() {
+    self$features <- nn_sequential(
+      nn_conv2d(3, 64, kernel_size = 3, padding = 1),
+      nn_relu(),
+      nn_max_pool2d(kernel_size = 2),
+      nn_conv2d(64, 128, kernel_size = 3, padding = 1),
+      nn_relu(),
+      nn_max_pool2d(kernel_size = 2),
+      nn_conv2d(128, 256, kernel_size = 3, padding = 1),
+      nn_relu(),
+      nn_max_pool2d(kernel_size = 2),
+      nn_conv2d(256, 512, kernel_size = 3, padding = 1),
+      nn_relu(),
+      nn_max_pool2d(kernel_size = 2),
+      nn_conv2d(512, 1024, kernel_size = 3, padding = 1),
+      nn_relu(),
+      nn_adaptive_avg_pool2d(c(1, 1))
+    )
+    self$classifier <- nn_sequential(
+      nn_linear(1024, 1024),
+      nn_relu(),
+      nn_linear(1024, 1024),
+      nn_relu(),
+      nn_linear(1024, 200)
+    )
+  },
+  forward = function(x) {
+    x <- self$features(x)$squeeze()
+    x <- self$classifier(x)
+    x
+  }
+)
+```
+
+```{r}
+fitted <- convnet %>%
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+      luz_metric_accuracy()
+    )
+  ) %>%
+  fit(train_dl,
+      epochs = 1,
+      valid_data = valid_dl,
+      verbose = TRUE
+      )
+```
+Dieser Codechunk kann lange dauern, mit den Epochen kann man es verkürzen.
+
+```{r}
+preds <- last %>% predict(valid_dl)
+```
+
+```{r}
+torch_argmax(preds, dim = 2)
+```
+
+
+

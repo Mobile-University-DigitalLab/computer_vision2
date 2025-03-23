@@ -1,0 +1,217 @@
+---
+title: "Unit 6 Computer Vision mit RVision"
+output:
+  html_notebook: default
+  word_document: default
+---
+
+# Vorbereitungen
+## Clear workspace
+Löschen Sie die alte Umgebung, um in einem "neuen" R zu starten.
+```{r}
+rm(list=ls())
+```
+
+
+# Rvision
+## Installation
+### Devtools
+Zur Installation der Rvision Library wird Devtools benötigt.
+
+```{r}
+#if (!require(devtools))
+#  install.packages("devtools")
+```
+
+
+### ROpenCVLite
+Im Anschluss muss ROpenCVLite installiert werden.
+```{r}
+#install.packages("ROpenCVLite")
+```
+```{r}
+#library(ROpenCVLite)
+```
+
+```{r}
+#devtools::install_github("swarm-lab/Rvision")
+library(Rvision)
+```
+
+
+
+
+
+# 3.	Rvision als Computer Vision Bibliothek für R
+## Installation
+### Devtools
+Zur Installation der Rvision Library wird Devtools benötigt.
+
+```{r}
+#if (!require(devtools))
+#  install.packages("devtools")
+```
+
+
+### ROpenCVLite
+Im Anschluss muss ROpenCVLite installiert werden.
+```{r}
+#install.packages("ROpenCVLite")
+```
+```{r}
+#library(ROpenCVLite)
+```
+
+```{r}
+#devtools::install_github("swarm-lab/Rvision")
+library(Rvision)
+```
+
+```{r}
+# Find the path to the balloon1.png image provided with Rvision
+path_to_image <- system.file("sample_img", "balloon1.png", package = "Rvision")
+
+# Load the image in memory
+my_image <- image(filename = path_to_image)
+```
+
+
+
+```{r}
+plot(my_image)
+```
+
+
+## Input/output Operations
+### Bildobjekt aus einer Datei
+```{r}
+my_file_img <- image("../images/Riedlingen.jpg")
+```
+
+### Bilddatei schreiben
+```{r}
+write.Image(my_file_img, paste0(tempdir(), "/Riedlingen_export.png"))
+```
+
+### Bildeigenschaften aufrufen
+```{r}
+isImage(my_file_img)
+dim(my_file_img)
+nrow(my_file_img)
+ncol(my_file_img)
+bitdepth(my_file_img)
+colorspace(my_file_img)
+```
+
+### Bild anzeigen
+```{r}
+plot(my_file_img)
+```
+
+### Erweiterte Operationen an Bildern
+#### KOnvertierung in Grayscale
+```{r}
+my_file_img_gray <- changeColorSpace(my_file_img, "GRAY")
+plot(my_file_img_gray)
+```
+
+#### Aufsplittung der Farbkanäle in einzelne Bilder
+```{r}
+my_channels <- split(my_file_img) # Order of channels is Blue, Green, Red, Alpha
+
+layout(matrix(1:4, 2, 2, byrow = TRUE))
+invisible(lapply(my_channels, plot))  # 'invisible' is used to hide the console output. It is not necessary otherwise.
+```
+
+
+#### Separate Channels mergen
+```{r}
+my_merged_channels <- merge(my_channels)
+plot(my_merged_channels)
+```
+
+#### Filter: Blurs 
+Image von https://pixabay.com/de/photos/ara-papagei-vogel-hybrid-rot-grün-943228/
+```{r}
+img <- image("../images/macaw-943228_1280.jpg")
+library(dplyr)
+boxFilter(img, k_height = 25, k_width = 25) %>% plot()
+gaussianBlur(img, k_height = 25, k_width = 25, sigma_x = 5, sigma_y = 5) %>% plot()
+medianBlur(img, k_size = 25) %>% plot()
+sqrBoxFilter(img, k_height = 25, k_width = 25) %>% plot()
+```
+#### Edge Detection
+Anwenden von Edge detection Algorithmen wie sobel und laplacian
+
+```{r}
+sobel(img) %>% plot()
+```
+
+#### Draws
+```{r}
+img1 <- cloneImage(img)
+drawCircle(img1, x = 750, y = 750, radius = 200, color = "blue", 
+           thickness = 10)
+plot(img1)
+```
+
+#### Blob Detektion
+Bis jetzt haben wir uns eine Reihe verschiedener Funktionen angeschaut, aber alle wurden einzeln verwendet. Jetzt wollen wir sie kombinieren, um etwas innerhalb des Bildes zu erkennen.
+
+Bild laden
+```{r}
+img <- image("../images/snooker2.jpg")
+plot(img)
+```
+Funktion für die Blob Detektion
+```{r}
+blob_fun <- function(img, fun, color = character()) {
+  img %>%
+    split() %>%
+    do.call(fun, .) %>%
+    medianBlur(15) %>%
+    simpleBlobDetector(max_area = Inf, min_area = 10, blob_color = 255,
+                       filter_by_convexity = FALSE, 
+                       filter_by_inertia = FALSE, min_threshold = 0) %>%
+    mutate(color = color)
+} 
+
+multi_draw <- function(img, blobs) {
+  if (nrow(blobs) > 0) {
+    for (i in 1:nrow(blobs)) {
+      drawRectangle(img, 
+                    blobs$x[i] - 1 + blobs$size[i], 
+                    blobs$y[i] - 1 + blobs$size[i],
+                    blobs$x[i] - 1 - blobs$size[i], 
+                    blobs$y[i] - 1 - blobs$size[i], 
+                    thickness = 5, color = blobs$color[1])
+    }
+  }
+}
+```
+
+```{r}
+blue <-   function(B, G, R) B > 150 & R < 200 & G < 200
+red <-    function(B, G, R) R > 150 & B < 200 & G < 150
+green <-  function(B, G, R) G > 150 & B < 200 & R < 200
+yellow <- function(B, G, R) G > 150 & B < 200 & B > 150 & R > 150
+orange <- function(B, G, R) G > 150 & B < 150 & R > 150
+```
+
+
+```{r}
+blue_mms <-   blob_fun(img, blue, "blue")
+red_mms <-    blob_fun(img, red, "red")
+green_mms <-  blob_fun(img, green, "green")
+yellow_mms <- blob_fun(img, yellow, "yellow")
+orange_mms <- blob_fun(img, orange, "orange")
+
+multi_draw(img, blue_mms)
+multi_draw(img, red_mms)
+multi_draw(img, green_mms)
+multi_draw(img, yellow_mms)
+multi_draw(img, orange_mms)
+
+plot(img)
+```
+Übung: Passen Sie den Blob-Filter so an, dass er bessere Resultate liefert.

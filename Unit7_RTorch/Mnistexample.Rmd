@@ -23,6 +23,8 @@ library(torchvision)
 library(luz)
 library(reshape2)
 library(ggplot2)
+#remove.packages("rappdirs")     Falls Probleme auftreten
+#install.packages("rappdirs")
 ```
 
 ## Fetching a dataset
@@ -150,6 +152,7 @@ von https://sparrow.dev/wp-content/uploads/2021/03/5.png und im Datenfolder des 
 library(magick)
 
 # Bild-URL (Beispiel)
+#img <- image_read("../images/Predictfour.png")
 img <- image_read("../images/Predictfour.png")
 ```
 ```{r}

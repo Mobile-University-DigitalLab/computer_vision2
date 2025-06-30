@@ -1,0 +1,193 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Nach https://jtr13.github.io/cc21fall2/tutorial-on-r-torch-package.html
+
+## Clear workspace
+Löschen Sie die alte Umgebung, um in einem "neuen" R zu starten.
+```{r}
+rm(list=ls())
+```
+
+## Torch in R einrichten
+```{r}
+#install.packages("torch")
+#install.packages("(torchvision")
+#install.packages("torchaudio")
+#install.packages("luz")
+#install.packages("reshape2")
+library(torch)
+library(torchvision)
+library(luz)
+library(reshape2)
+library(ggplot2)
+```
+
+## Fetching a dataset
+```{r}
+dir <- "./dataset/mnist"
+
+train_ds <- mnist_dataset(
+  dir,
+  download = TRUE,
+  transform = transform_to_tensor
+)
+
+test_ds <- mnist_dataset(
+  dir,
+  train = FALSE,
+  transform = transform_to_tensor
+)
+
+train_dl <- dataloader(train_ds, batch_size = 128, shuffle = TRUE)
+test_dl <- dataloader(test_ds, batch_size = 128)
+```
+## Batch size
+```{r}
+image_matrix <- as.matrix(train_ds$data[1, 1:28, 1:28])
+image_df <- melt(image_matrix)
+ggplot(image_df, aes(x=Var2, y=Var1, fill=value))+
+  geom_tile(show.legend = FALSE) + 
+  xlab("") + ylab("") +
+  scale_fill_gradient(low="white", high="black")
+```
+## Building up the network
+```{r}
+net <- nn_module(
+  "Net",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(1, 32, 3, 1)
+    self$conv2 <- nn_conv2d(32, 64, 3, 1)
+    self$dropout1 <- nn_dropout(0.25)
+    self$dropout2 <- nn_dropout(0.5)
+    self$fc1 <- nn_linear(9216, 128)
+    self$fc2 <- nn_linear(128, 10)
+  },
+  forward = function(x) {
+    x %>%
+      self$conv1() %>%
+      nnf_relu() %>%
+      self$conv2() %>%
+      nnf_relu() %>%
+      nnf_max_pool2d(2) %>%
+      self$dropout1() %>%
+      torch_flatten(start_dim = 2) %>%
+      self$fc1() %>%
+      nnf_relu() %>%
+      self$dropout2() %>%
+      self$fc2()
+  }
+)
+```
+
+## Training
+```{r}
+fitted <- net %>%
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+      luz_metric_accuracy()
+    )
+  ) %>%
+  fit(train_dl, epochs = 1, valid_data = test_dl) # Epochen können hier justiert werden
+```
+
+## Testing
+```{r}
+preds <- predict(fitted, test_dl)
+preds$shape
+```
+
+## Saving the model
+```{r}
+luz_save(fitted, "mnist-cnn.pt")
+```
+
+## Modell benutzen
+
+
+```{r}
+# 1. Deine Netzarchitektur
+net <- nn_module(
+  "Net",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(1, 32, 3, 1)
+    self$conv2 <- nn_conv2d(32, 64, 3, 1)
+    self$dropout1 <- nn_dropout(0.25)
+    self$dropout2 <- nn_dropout(0.5)
+    self$fc1 <- nn_linear(9216, 128)
+    self$fc2 <- nn_linear(128, 10)
+  },
+  forward = function(x) {
+    x %>%
+      self$conv1() %>%
+      nnf_relu() %>%
+      self$conv2() %>%
+      nnf_relu() %>%
+      nnf_max_pool2d(2) %>%
+      self$dropout1() %>%
+      torch_flatten(start_dim = 2) %>%
+      self$fc1() %>%
+      nnf_relu() %>%
+      self$dropout2() %>%
+      self$fc2()
+  }
+)
+
+# 2. Modell laden
+model <- luz_load("mnist-cnn.pt")
+print(model)
+
+
+```
+
+### Bild laden
+von https://sparrow.dev/wp-content/uploads/2021/03/5.png und im Datenfolder des Notebooks
+```{r}
+library(magick)
+
+# Bild-URL (Beispiel)
+img <- image_read("../images/Predictfour.png")
+```
+```{r}
+plot(img)
+```
+```{r}
+arr <- image_data(img, channels = "gray")
+img_matrix <- as.numeric(arr[1, , ])
+img_matrix <- matrix(img_matrix, nrow = 28, ncol = 28, byrow = TRUE)
+img_matrix <- img_matrix / 255
+
+img_tensor <- torch_tensor(img_matrix, dtype = torch_float())
+img_tensor <- img_tensor$unsqueeze(1)$unsqueeze(1)
+
+prediction <- predict(model, img_tensor)
+pred_class <- as.array(prediction$argmax(dim = 2))
+cat("Vorhergesagte Ziffer:", pred_class, "\n")
+```
+
+
+
+```{r}
+# Bild vorbereiten
+img_array <- as.numeric(image_data(img, channels = "gray")[1,,])
+img_matrix <- matrix(img_array, nrow = 28, ncol = 28)
+img_matrix <- img_matrix / 255
+
+# Tensor erzeugen
+img_tensor <- torch_tensor(img_matrix, dtype = torch_float())
+img_tensor <- img_tensor$unsqueeze(1)$unsqueeze(1)  # [1, 1, 28, 28]
+
+# Vorhersage
+prediction <- predict(model, img_tensor)
+
+# Zugriff ohne [[1]] !
+pred_class <- as.array(prediction$argmax(dim = 2))
+cat("Vorhergesagte Ziffer:", pred_class, "\n")
+```
+
+
+

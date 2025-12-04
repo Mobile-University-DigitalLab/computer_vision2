@@ -1,0 +1,319 @@
+---
+title: "Unit 9 - CNN with R Torch"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Clear workspace
+Löschen Sie die alte Umgebung, um in einem "neuen" R zu starten.
+```{r}
+rm(list=ls())
+```
+
+# Torch in R einrichten
+```{r}
+#install.packages("torch")
+#install.packages("torchvision")
+#install.packages("torchaudio")
+#install.packages("luz")
+#install.packages("reshape2")
+library(torch)
+library(torchvision)
+library(luz)
+library(reshape2)
+library(ggplot2)
+#remove.packages("rappdirs")    # Falls Probleme auftreten
+#install.packages("rappdirs")
+```
+
+# Daten laden
+```{r}
+dir <- "./dataset/mnist"
+
+train_ds <- mnist_dataset(
+  dir,
+  train = TRUE,
+  download = TRUE,
+  transform = function(img) {
+    # [28,28] -> [1,28,28]  (ein Kanal hinzufügen)
+    transform_to_tensor(img)$unsqueeze(1)
+  }
+)
+
+test_ds <- mnist_dataset(
+  dir,
+  train = FALSE,
+  download = TRUE,
+  transform = function(img) {
+    transform_to_tensor(img)$unsqueeze(1)
+  }
+)
+
+train_dl <- dataloader(
+  train_ds, batch_size = 128, shuffle = TRUE,
+  drop_last = TRUE, num_workers = 0
+)
+test_dl <- dataloader(test_ds, batch_size = 64, num_workers = 0)
+```
+
+# Bilder visualisieren
+```{r}
+# Hilfsfunktion für EIN Bild
+plot_mnist_image <- function(img, digit) {
+  # img ist 28x28-Matrix (int)
+  img_mat <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # R image(): (1,1) = unten links; MNIST: (1,1) = oben links
+  # -> Zeilen umdrehen und transponieren
+  img_plot <- t(img_mat[28:1, ])
+
+  image(
+    img_plot,
+    col  = gray.colors(256),
+    axes = FALSE,
+    main = paste("Label:", digit)
+  )
+}
+
+# 10x10 Grid der ersten 100 Bilder
+par(mfrow = c(10, 10), mar = c(0.1, 0.1, 1.5, 0.1))
+
+for (i in 1:100) {
+  sample <- train_ds[i]
+  img    <- sample[[1]]  # 28x28
+  label  <- sample[[2]]  # 1..10 in R-torch
+
+  # "echte" MNIST-Ziffer: 0..9
+  digit <- as.integer(label) - 1L
+
+  plot_mnist_image(img, digit)
+}
+
+par(mfrow = c(1, 1))
+```
+
+
+# Batch size festlegen
+```{r}
+image_matrix <- as.matrix(train_ds$data[1, 1:28, 1:28])
+image_df <- melt(image_matrix)
+ggplot(image_df, aes(x=Var2, y=Var1, fill=value))+
+  geom_tile(show.legend = FALSE) + 
+  xlab("") + ylab("") +
+  scale_fill_gradient(low="white", high="black")
+```
+
+# Building up the network
+```{r}
+net <- nn_module(
+  "Net",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(1, 32, 3, 1)
+    self$conv2 <- nn_conv2d(32, 64, 3, 1)
+    self$dropout1 <- nn_dropout(0.25)
+    self$dropout2 <- nn_dropout(0.5)
+    self$fc1 <- nn_linear(9216, 128)
+    self$fc2 <- nn_linear(128, 10)
+  },
+  forward = function(x) {
+  # fehlenden Kanal ergänzen: [N,28,28] -> [N,1,28,28]
+  if (x$ndim == 3) x <- x$unsqueeze(2)
+  # vertauschte Batch/Kanal-Achse korrigieren: [1,B,28,28] -> [B,1,28,28]
+  if (x$ndim == 4 && x$size(1) == 1 && x$size(2) != 1) {
+    x <- x$permute(c(2,1,3,4))
+  }
+
+  x %>%
+    self$conv1() %>% nnf_relu() %>%
+    self$conv2() %>% nnf_relu() %>%
+    nnf_max_pool2d(2) %>%
+    self$dropout1() %>%
+    torch_flatten(start_dim = 2) %>%
+    self$fc1() %>% nnf_relu() %>%
+    self$dropout2() %>%
+    self$fc2()
+}
+)
+```
+
+# Training
+```{r}
+fitted <- net %>%
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_adam,
+    metrics = list(
+      luz_metric_accuracy()
+    )
+  ) %>%
+  fit(train_dl, epochs = 1, valid_data = test_dl) # Epochen können hier justiert werden
+```
+
+# Testing
+```{r}
+library(coro)
+library(torch)
+
+mdl <- fitted$model
+mdl$eval()
+
+total <- 0
+correct <- 0
+
+with_no_grad({
+  coro::loop(for (batch in test_dl) {
+    x <- batch[[1]]
+    y <- batch[[2]]
+
+    if (x$ndim == 3) x <- x$unsqueeze(2)
+    if (x$ndim == 4 && x$size(1) == 1 && x$size(2) != 1) {
+      x <- x$permute(c(2,1,3,4))
+    }
+
+    logits <- mdl(x)
+    pred <- logits$argmax(dim = 2)
+    correct <- correct + pred$eq(y)$sum()$item()
+    total   <- total   + y$numel()
+  })
+})
+
+cat(sprintf("Test accuracy: %.4f\n", correct/total))
+```
+
+# Saving the model
+```{r}
+luz_save(fitted, "mnist-cnn.pt")
+```
+
+Jetzt kannst du direkt Bilder vorhersagen lassen — egal ob aus test_ds oder magick.
+# Modell laden und für Vorhersagen vorbereiten
+```{r}
+library(torch)
+library(luz)
+library(reshape2)
+library(ggplot2)
+
+# Modell komplett laden
+fitted <- luz_load("mnist-cnn.pt")
+
+# Modellteil extrahieren
+mdl <- fitted$model
+mdl$eval()
+```
+
+
+#######################################
+#######################################
+
+```{r}
+#set.seed(123)                             # für Reproduzierbarkeit (optional)
+idx <- sample(1:length(test_ds), 1)       # zufälliger Index aus dem Testdatensatz
+
+sample <- test_ds[idx]
+img        <- sample[[1]]                 # Bild-Tensor [1, 28, 28]
+label_raw  <- sample[[2]]                 # Label (1..10 in torch)
+
+# "Echte" Ziffer (0–9) aus dem Label machen
+true_digit <- as.integer(label_raw) - 1L
+
+# ---------- Vorhersage mit dem Modell ----------
+
+mdl$eval()
+with_no_grad({
+  logits      <- mdl(img)                 # [1, 10]
+  pred_class  <- logits$argmax(dim = 2)$item()   # 1..10
+})
+pred_digit <- pred_class - 1L             # 0..9
+
+# ---------- Bild plotten (base::image) ----------
+
+# [1,28,28] -> [28,28] -> Matrix
+img_mat  <- as.matrix(as.array(img$squeeze()))
+
+# Für R-image richtig orientieren: Zeilen umdrehen + transponieren
+img_plot <- t(img_mat[28:1, ])
+
+image(
+  img_plot,
+  col  = gray.colors(256),
+  axes = FALSE,
+  main = paste0(
+    "Index ", idx,
+    " – Label: ", true_digit,
+    " – Vorhersage: ", pred_digit
+  )
+)
+
+cat("Index:      ", idx,          "\n",
+    "Label:      ", true_digit,  "\n",
+    "Vorhersage: ", pred_digit,  "\n")
+```
+
+```{r}
+# Hilfsfunktion für korrektes MNIST-Plotten in base::image
+plot_mnist_prediction <- function(img, true_digit, pred_digit) {
+  # [1,28,28] → [28,28]
+  img_mat <- as.matrix(as.array(img$squeeze()))
+  
+  # R-image-Korrektur: Zeilen flippen und transponieren
+  img_plot <- t(img_mat[28:1, ])
+  
+  title <- paste0("L:", true_digit, "  P:", pred_digit)
+  
+  image(
+    img_plot,
+    col = gray.colors(256),
+    axes = FALSE,
+    main = title
+  )
+}
+
+# 100 zufällige Indizes aus dem Testdatensatz
+set.seed(123)
+idxs <- sample(1:length(test_ds), 100)
+
+par(mfrow = c(10,10), mar = c(0.2,0.2,1.5,0.2))
+
+with_no_grad({
+  for (i in idxs) {
+    sample <- test_ds[i]
+    img       <- sample[[1]]
+    label_raw <- sample[[2]]
+    
+    # Label korrigieren: 1–10 → 0–9
+    true_digit <- as.integer(label_raw) - 1L
+    
+    # Vorhersage
+    logits     <- mdl(img)
+    pred_class <- logits$argmax(dim = 2)$item()
+    pred_digit <- pred_class - 1L        # 0–9
+    
+    # Plot
+    plot_mnist_prediction(img, true_digit, pred_digit)
+  }
+})
+
+par(mfrow = c(1,1))
+```
+
+Hinweis (Wichtig für zukünftige Nutzung)
+
+Beim Arbeiten mit mnist_dataset() in torch für R traten anfangs scheinbar falsche Bild-Label-Paare auf. Der Grund war zweigeteilt:
+
+Label-Verschiebung:
+Torch gibt MNIST-Labels nicht als 0–9 zurück, sondern als 1–10, weil die Loss-Funktionen in R 1-basierte Klassen erwarten.
+→ Die korrekte Ziffer bekommt man daher erst durch label - 1.
+
+Bildorientierung:
+MNIST speichert Pixel mit Ursprung oben links, während base::image() in R den Ursprung unten links annimmt.
+Ohne Umorientierung wirkt jedes Bild „vertauscht“ oder „falsch“.
+→ Die korrekte Darstellung erhält man durch Zeilen umdrehen und transponieren.
+
+Nachdem beide Effekte berücksichtigt wurden (Labels um 1 reduziert + richtige Bildtransformation), stimmen Bild, Label und Modellvorhersage vollständig überein.
+
+
+```{r}
+print("Done")
+```
+
